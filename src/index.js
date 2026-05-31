@@ -47,18 +47,68 @@ function notify(msg) {
   return telegram.sendMessage(TG_CHAT, msg, { parse_mode: "Markdown", disable_web_page_preview: true }).catch(function(e) { console.error("[TG]", e.message); });
 }
 
+function loadKey() {
+  var raw = CB_SECRET;
+  console.log("[AUTH] Secret starts with: " + raw.substring(0, 30) + "...");
+  console.log("[AUTH] Secret length: " + raw.length);
+  var pem = raw.replace(/\\n/g, "\n");
+  if (pem.indexOf("-----") === -1) {
+    pem = "-----BEGIN EC PRIVATE KEY-----\n" + pem + "\n-----END EC PRIVATE KEY-----";
+  }
+  try {
+    privateKey = crypto.createPrivateKey({ key: pem, format: "pem" });
+    console.log("[AUTH] Key type: " + privateKey.asymmetricKeyType);
+    return true;
+  } catch(e1) {
+    console.log("[AUTH] EC format failed: " + e1.message);
+    try {
+      var pem2 = pem.replace("EC PRIVATE KEY", "PRIVATE KEY");
+      privateKey = crypto.createPrivateKey({ key: pem2, format: "pem" });
+      console.log("[AUTH] Key type (PKCS8): " + privateKey.asymmetricKeyType);
+      return true;
+    } catch(e2) {
+      console.log("[AUTH] PKCS8 format failed: " + e2.message);
+      console.log("[AUTH] Trying raw base64...");
+      try {
+        var b64 = raw.replace(/-----[^-]+-----/g, "").replace(/\\n/g, "").replace(/\n/g, "").replace(/\s/g, "");
+        var der = Buffer.from(b64, "base64");
+        privateKey = crypto.createPrivateKey({ key: der, format: "der", type: "pkcs8" });
+        console.log("[AUTH] Key type (DER): " + privateKey.asymmetricKeyType);
+        return true;
+      } catch(e3) {
+        try {
+          var der2 = Buffer.from(b64, "base64");
+          privateKey = crypto.createPrivateKey({ key: der2, format: "der", type: "sec1" });
+          console.log("[AUTH] Key type (SEC1): " + privateKey.asymmetricKeyType);
+          return true;
+        } catch(e4) {
+          console.error("[AUTH] All formats failed");
+          console.error("[AUTH] Last error: " + e4.message);
+          return false;
+        }
+      }
+    }
+  }
+}
+
 function base64url(buf) { return buf.toString("base64").replace(/=/g,"").replace(/\+/g,"-").replace(/\//g,"_"); }
 
 function getJWT(method, path) {
   var uri = method.toUpperCase() + " " + "api.coinbase.com" + path;
   var now = Math.floor(Date.now() / 1000);
   var nonce = crypto.randomBytes(16).toString("hex");
-  var header = { alg: "EdDSA", kid: CB_KEY, nonce: nonce, typ: "JWT" };
+  var alg = privateKey.asymmetricKeyType === "ed25519" ? "EdDSA" : "ES256";
+  var header = { alg: alg, kid: CB_KEY, nonce: nonce, typ: "JWT" };
   var payload = { sub: CB_KEY, iss: "cdp", aud: ["cdp_service"], nbf: now, exp: now + 120, uris: [uri] };
   var headerB64 = base64url(Buffer.from(JSON.stringify(header)));
   var payloadB64 = base64url(Buffer.from(JSON.stringify(payload)));
   var msg = headerB64 + "." + payloadB64;
-  var sig = crypto.sign(null, Buffer.from(msg), privateKey);
+  var sig;
+  if (alg === "ES256") {
+    sig = crypto.sign("sha256", Buffer.from(msg), privateKey);
+  } else {
+    sig = crypto.sign(null, Buffer.from(msg), privateKey);
+  }
   return msg + "." + base64url(sig);
 }
 
@@ -94,7 +144,7 @@ async function loadAccounts() {
     var res = await cbRequest("GET", "/v2/accounts?limit=100");
     (res.data || []).forEach(function(a) { accounts[a.currency.code] = a.id; });
     console.log("[ACCOUNTS] Loaded " + Object.keys(accounts).length);
-  } catch(e) { console.error("[ACCOUNTS]", e.response ? e.response.status + " " + JSON.stringify(e.response.data) : e.message); }
+  } catch(e) { console.error("[ACCOUNTS]", e.response ? e.response.status : e.message); }
 }
 
 async function getUsdBalance() {
@@ -134,8 +184,8 @@ async function splitProfit(coin, productId, totalCoinProfit, price) {
   var usdAmount = totalCoinProfit * CONFIG.usdPct / 100;
   var reinvest = totalCoinProfit * CONFIG.reinvestPct / 100;
   if (LEDGER[coin] && ledgerAmount > 0) await sendToLedger(coin, ledgerAmount);
-  if (usdAmount > 0) { try { await marketSell(productId, usdAmount); await notify("💵 *Profit → USD*\n$" + (usdAmount * price).toFixed(2)); } catch(e) {} }
-  await notify("📊 *Split* " + coin + "\n💸35% Ledger: " + ledgerAmount.toFixed(6) + "\n💵35% USD: $" + (usdAmount * price).toFixed(2) + "\n🔄30% Reinvest: " + reinvest.toFixed(6));
+  if (usdAmount > 0) { try { await marketSell(productId, usdAmount); } catch(e) {} }
+  await notify("📊 *Split* " + coin + "\n💸35% Ledger\n💵35% USD\n🔄30% Reinvest");
 }
 
 async function buyToken(coin, productId, price) {
@@ -148,8 +198,8 @@ async function buyToken(coin, productId, price) {
     await marketBuy(productId, buyUsd);
     positions[coin] = { productId: productId, entryPrice: price, entryUsd: buyUsd, coinAmount: buyUsd / price, entryTime: Date.now() };
     savePositions();
-    await notify("🟢 *BUY* " + coin + "\n💰$" + buyUsd.toFixed(2) + " @ $" + price.toFixed(2) + "\n🎯TP:+" + CONFIG.takeProfitPct + "% SL:-" + CONFIG.stopLossPct + "%");
-  } catch(e) { console.error("[BUY ERROR]", e.response ? JSON.stringify(e.response.data) : e.message); await notify("⚠️ Buy failed: " + coin); }
+    await notify("🟢 *BUY* " + coin + " $" + buyUsd.toFixed(2) + " @ $" + price.toFixed(2));
+  } catch(e) { console.error("[BUY ERROR]", e.response ? JSON.stringify(e.response.data) : e.message); }
 }
 
 async function sellToken(coin, reason) {
@@ -159,13 +209,12 @@ async function sellToken(coin, reason) {
   if (!price) return;
   var pnl = ((price - pos.entryPrice) / pos.entryPrice) * 100;
   var profitCoin = pos.coinAmount * (pnl / 100);
-  console.log("[SELL] " + coin + " | " + reason + " | PnL: " + pnl.toFixed(2) + "%");
   try {
     await marketSell(pos.productId, pos.coinAmount);
     delete positions[coin]; savePositions();
-    await notify((pnl >= 0 ? "🔴" : "📉") + " *SELL* " + coin + "\n📊PnL: " + (pnl >= 0 ? "+" : "") + pnl.toFixed(2) + "%\n💡" + reason);
+    await notify((pnl >= 0 ? "🔴" : "📉") + " *SELL* " + coin + " PnL:" + pnl.toFixed(2) + "% " + reason);
     if (profitCoin > 0) await splitProfit(coin, pos.productId, profitCoin, price);
-  } catch(e) { console.error("[SELL ERROR]", e.message); await notify("⚠️ Sell failed: " + coin); }
+  } catch(e) { console.error("[SELL ERROR]", e.message); }
 }
 
 function delay(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
@@ -181,9 +230,9 @@ async function scan() {
     if (signal === "BUY" && !pos) await buyToken(coin, productId, price);
     if (pos) {
       var pnl = ((price - pos.entryPrice) / pos.entryPrice) * 100;
-      if (pnl >= CONFIG.takeProfitPct) await sellToken(coin, "TP +" + pnl.toFixed(1) + "%");
-      else if (pnl <= -CONFIG.stopLossPct) await sellToken(coin, "SL " + pnl.toFixed(1) + "%");
-      else if (signal === "SELL") await sellToken(coin, "Trend Reversal");
+      if (pnl >= CONFIG.takeProfitPct) await sellToken(coin, "TP");
+      else if (pnl <= -CONFIG.stopLossPct) await sellToken(coin, "SL");
+      else if (signal === "SELL") await sellToken(coin, "Reversal");
     }
     await delay(2000);
   }
@@ -192,21 +241,19 @@ async function scan() {
 async function heartbeat() {
   var usdBal = await getUsdBalance();
   var posNames = Object.keys(positions).length > 0 ? Object.keys(positions).join(", ") : "none";
-  await notify("💓 *Heartbeat*\n💰$" + usdBal.toFixed(2) + "\n📊" + Object.keys(positions).length + " positions (" + posNames + ")");
+  await notify("💓 *Heartbeat*\n💰$" + usdBal.toFixed(2) + " | " + Object.keys(positions).length + " positions (" + posNames + ")");
 }
 
 async function init() {
   if (!CB_KEY || !CB_SECRET) throw new Error("Missing COINBASE_API_KEY or COINBASE_API_SECRET");
-  var secretPem = CB_SECRET.replace(/\\n/g, "\n");
-  privateKey = crypto.createPrivateKey(secretPem);
-  console.log("[AUTH] Private key loaded: " + privateKey.asymmetricKeyType);
+  if (!loadKey()) throw new Error("Failed to load private key");
   if (TG_TOKEN && TG_CHAT) { telegram = new TelegramBot(TG_TOKEN, { polling: false }); console.log("[TG] Telegram connected"); }
   await loadAccounts();
   var usdBal = await getUsdBalance();
   loadPositions();
   console.log("[INIT] Blue-Chip Trend Bot v2 (Coinbase)");
   console.log("[INIT] USD: $" + usdBal.toFixed(2));
-  await notify("📈 *Blue-Chip Trend Bot ONLINE*\n🏦Coinbase\n💰$" + usdBal.toFixed(2) + "\n🎯BTC ETH SOL XRP ADA AVAX LINK DOT\n💸35% Ledger | 35% USD | 30% Reinvest");
+  await notify("📈 *Blue-Chip Bot ONLINE*\n🏦Coinbase\n💰$" + usdBal.toFixed(2) + "\n🎯BTC ETH SOL XRP ADA AVAX LINK DOT");
 }
 
 init().then(async function() {
