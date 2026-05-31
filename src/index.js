@@ -59,7 +59,8 @@ function notify(msg) {
 function cbSign(method, path, body) {
   var timestamp = Math.floor(Date.now() / 1000).toString();
   var message = timestamp + method.toUpperCase() + path + (body || "");
-  var signature = crypto.createHmac("sha256", CB_SECRET).update(message).digest("hex");
+  var secretBuffer = Buffer.from(CB_SECRET, "base64");
+  var signature = crypto.createHmac("sha256", secretBuffer).update(message).digest("hex");
   return { "CB-ACCESS-KEY": CB_KEY, "CB-ACCESS-SIGN": signature, "CB-ACCESS-TIMESTAMP": timestamp, "Content-Type": "application/json" };
 }
 
