@@ -87,9 +87,9 @@ function getUsdBalance() {
 }
 
 function getPrice(productId) {
-  return cbRequest("GET", "/api/v3/brokerage/products/" + productId).then(function(res) {
-    return parseFloat(res.price);
-  }).catch(function() { return null; });
+  return axios.get("https://api.coinbase.com/v2/prices/" + productId + "/spot", { timeout: 8000 }).then(function(res) {
+    return parseFloat(res.data.data.amount);
+  }).catch(function(e) { console.error("[PRICE ERR]", e.message); return null; });
 }
 
 function updatePriceHistory(coin, productId) {
