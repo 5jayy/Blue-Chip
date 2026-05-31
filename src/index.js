@@ -105,7 +105,15 @@ function getJWT(method, path) {
   var msg = headerB64 + "." + payloadB64;
   var sig;
   if (alg === "ES256") {
-    sig = crypto.sign("sha256", Buffer.from(msg), privateKey);
+    var derSig = crypto.sign("sha256", Buffer.from(msg), privateKey);
+    // Convert DER to raw R||S format for JWT
+    var r = derSig.subarray(4, 4 + derSig[3]);
+    var sOffset = 4 + derSig[3] + 2;
+    var s = derSig.subarray(sOffset, sOffset + derSig[sOffset - 1]);
+    // Pad to 32 bytes each
+    var rPad = Buffer.alloc(32); r.copy(rPad, 32 - r.length);
+    var sPad = Buffer.alloc(32); s.copy(sPad, 32 - s.length);
+    sig = Buffer.concat([rPad, sPad]);
   } else {
     sig = crypto.sign(null, Buffer.from(msg), privateKey);
   }
