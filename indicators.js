@@ -1,55 +1,42 @@
 "use strict";
 
-/**
- * Calculate Exponential Moving Average
- */
 function ema(prices, period) {
   if (prices.length < period) return null;
-  const k = 2 / (period + 1);
-  let emaVal = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  for (let i = period; i < prices.length; i++) {
+  var k = 2 / (period + 1);
+  var emaVal = prices.slice(0, period).reduce(function(a, b) { return a + b; }, 0) / period;
+  for (var i = period; i < prices.length; i++) {
     emaVal = prices[i] * k + emaVal * (1 - k);
   }
   return emaVal;
 }
 
-/**
- * Calculate RSI
- */
-function rsi(prices, period = 14) {
+function rsi(prices, period) {
+  period = period || 14;
   if (prices.length < period + 1) return null;
-  const changes = [];
-  for (let i = 1; i < prices.length; i++) {
+  var changes = [];
+  for (var i = 1; i < prices.length; i++) {
     changes.push(prices[i] - prices[i - 1]);
   }
-  const recent = changes.slice(-period);
-  const gains  = recent.filter(c => c > 0).reduce((a, b) => a + b, 0) / period;
-  const losses = Math.abs(recent.filter(c => c < 0).reduce((a, b) => a + b, 0)) / period;
+  var recent = changes.slice(-period);
+  var gains = recent.filter(function(c) { return c > 0; }).reduce(function(a, b) { return a + b; }, 0) / period;
+  var losses = Math.abs(recent.filter(function(c) { return c < 0; }).reduce(function(a, b) { return a + b; }, 0)) / period;
   if (losses === 0) return 100;
-  const rs = gains / losses;
+  var rs = gains / losses;
   return 100 - (100 / (1 + rs));
 }
 
-/**
- * Detect trend signal from price array
- * Returns: 'BUY' | 'SELL' | 'HOLD'
- */
 function getTrendSignal(prices) {
-  if (prices.length < 26) return 'HOLD';
-
-  const ema9  = ema(prices, 9);
-  const ema21 = ema(prices, 21);
-  const rsiVal = rsi(prices, 14);
-  const price  = prices[prices.length - 1];
-
-  if (!ema9 || !ema21 || !rsiVal) return 'HOLD';
-
-  const bullish = ema9 > ema21 && price > ema9 && rsiVal > 50 && rsiVal < 70;
-  const bearish = ema9 < ema21 || rsiVal > 75 || rsiVal < 30;
-
-  if (bullish) return 'BUY';
-  if (bearish) return 'SELL';
-  return 'HOLD';
+  if (prices.length < 26) return "HOLD";
+  var ema9 = ema(prices, 9);
+  var ema21 = ema(prices, 21);
+  var rsiVal = rsi(prices, 14);
+  var price = prices[prices.length - 1];
+  if (!ema9 || !ema21 || !rsiVal) return "HOLD";
+  var bullish = ema9 > ema21 && price > ema9 && rsiVal > 50 && rsiVal < 70;
+  var bearish = ema9 < ema21 || rsiVal > 75 || rsiVal < 30;
+  if (bullish) return "BUY";
+  if (bearish) return "SELL";
+  return "HOLD";
 }
 
-module.exports = { ema, rsi, getTrendSignal };
+module.exports = { ema: ema, rsi: rsi, getTrendSignal: getTrendSignal };
